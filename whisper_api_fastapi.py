@@ -1,9 +1,14 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 import whisper
 import tempfile
 import os
 import uvicorn
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+import logging
+from datetime import datetime
 
 app = FastAPI(title="Whisper API", version="1.0.0")
 
@@ -34,6 +39,23 @@ def get_model():
     return _model
 
 
+API_KEY = os.getenv("API_KEY", "dhsauidhasdhu123hh34i3h4hiu12hdsuh")
+
+async def verify_api_key(x_api_key: str = Header(...)):
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API Key")
+
+    limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
 @app.get("/")
 async def root():
     return {"status": "online", "service": "Whisper API"}
@@ -45,7 +67,9 @@ async def health():
 
 
 @app.post("/transcribe")
+@limiter.limit("10/minute")
 async def transcribe_audio(file: UploadFile = File(...)):
+    logger.info(f"Transcription request: {file.filename}")
     """Transcrever áudio"""
 
     # ✅ Validação de tamanho (max 25MB)
@@ -87,6 +111,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
         os.unlink(temp_path)
 
         print(f"✅ Transcrito: {result['text'][:50]}...")
+        logger.info(f"Transcription completed: {len(result['text'])} chars")
 
         return {
             "success": True,
